@@ -1,0 +1,211 @@
+{
+  "info": {
+    "name": "Book My Ticket API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Quick test collection for auth and booking flows."
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "movieId",
+      "value": "1"
+    },
+    {
+      "key": "seatNumber",
+      "value": "7"
+    },
+    {
+      "key": "name",
+      "value": "Sayantan"
+    },
+    {
+      "key": "email",
+      "value": "sayantan@example.com"
+    },
+    {
+      "key": "password",
+      "value": "secret123"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth - Register",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"{{name}}\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Auth - Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Login returns 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "const data = pm.response.json();",
+              "if (data && data.token) {",
+              "  pm.collectionVariables.set('token', data.token);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "login"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Movies - List",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/movies",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "movies"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Movies - Seats",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/movies/{{movieId}}/seats",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "movies",
+            "{{movieId}}",
+            "seats"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Bookings - Create (Protected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"seatNumber\": {{seatNumber}}\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/movies/{{movieId}}/bookings",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "movies",
+            "{{movieId}}",
+            "bookings"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Bookings - My Bookings (Protected)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/me/bookings",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "me",
+            "bookings"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Legacy - Seats",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/seats",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "seats"
+          ]
+        }
+      }
+    }
+  ]
+}
