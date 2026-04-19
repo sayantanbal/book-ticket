@@ -46,7 +46,7 @@ function getPoolConfig() {
 
 export const pool = new pg.Pool({
   ...getPoolConfig(),
-  max: 20,
-  connectionTimeoutMillis: 0,
-  idleTimeoutMillis: 0,
+  max: env.poolMax,
+  connectionTimeoutMillis: env.poolConnectionTimeoutMs,
+  idleTimeoutMillis: env.poolIdleTimeoutMs,
 });

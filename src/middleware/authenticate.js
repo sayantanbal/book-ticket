@@ -1,3 +1,4 @@
+import { HttpError } from "../errors/HttpError.js";
 import { verifyToken } from "../lib/auth.js";
 
 export function authenticate(req, res, next) {
@@ -5,7 +6,11 @@ export function authenticate(req, res, next) {
   const [scheme, token] = authHeader.split(" ");
 
   if (scheme !== "Bearer" || !token) {
-    res.status(401).send({ error: "Missing or invalid authorization token" });
+    next(
+      new HttpError(401, "Missing or invalid authorization token", {
+        code: "MISSING_TOKEN",
+      }),
+    );
     return;
   }
 
@@ -13,7 +18,7 @@ export function authenticate(req, res, next) {
     const payload = verifyToken(token);
     req.user = payload;
     next();
-  } catch {
-    res.status(401).send({ error: "Token expired or invalid" });
+  } catch (error) {
+    next(error);
   }
 }

@@ -361,6 +361,22 @@
           saveSession: true,
         },
         {
+          id: "refreshSession",
+          label: "Refresh Session",
+          description:
+            "Rotate refresh token cookie and return a new access token.",
+          method: "POST",
+          path: () => "/auth/refresh",
+          saveSession: true,
+        },
+        {
+          id: "logout",
+          label: "Logout Session",
+          description: "Revoke refresh token and clear auth cookie.",
+          method: "POST",
+          path: () => "/auth/logout",
+        },
+        {
           id: "movies",
           label: "Get Movies",
           description: "Returns mocked movie metadata.",
@@ -403,6 +419,7 @@
           label: "Legacy Book Seat",
           description: "Original route booking by seat id and name.",
           method: "PUT",
+          requiresAuth: true,
           path: (ctx) => `/${ctx.legacySeatId}/${encodeURIComponent(ctx.name)}`,
         },
       ];
@@ -492,8 +509,15 @@
               <p class="muted">${test.description}</p>
             </div>
             <button class="primary" type="button" data-endpoint-id="${test.id}">Run</button>
-            <pre class="endpoint-result" data-endpoint-output="${test.id}">${lastResult}</pre>
+            <pre class="endpoint-result" data-endpoint-output="${test.id}"></pre>
           `;
+
+          const outputEl = item.querySelector(
+            `[data-endpoint-output="${test.id}"]`,
+          );
+          if (outputEl) {
+            outputEl.textContent = lastResult;
+          }
 
           els.endpointList.appendChild(item);
         });
@@ -579,6 +603,13 @@
           ) {
             state.token = body.token;
             state.user = body.user;
+            persistSession();
+            renderSession();
+          }
+
+          if (response.ok && endpointId === "logout") {
+            state.token = "";
+            state.user = null;
             persistSession();
             renderSession();
           }

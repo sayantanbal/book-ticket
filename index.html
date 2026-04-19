@@ -723,6 +723,7 @@ No endpoint test run yet.</pre
         seats: [],
         bookings: [],
       };
+      let refreshInFlight = null;
 
       const ENDPOINT_TESTS = [
         {
@@ -768,6 +769,7 @@ No endpoint test run yet.</pre
           label: "Legacy Book Seat",
           description: "Original route that books by seat id and name.",
           method: "PUT",
+          requiresAuth: true,
           path: (context) =>
             `/${context.legacySeatId}/${encodeURIComponent(context.legacyName)}`,
         },
@@ -815,7 +817,46 @@ No endpoint test run yet.</pre
         }
       }
 
-      async function api(path, options = {}, requiresAuth = false) {
+      async function refreshAccessToken() {
+        if (refreshInFlight) {
+          return refreshInFlight;
+        }
+
+        refreshInFlight = (async () => {
+          const response = await fetch("/auth/refresh", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            return false;
+          }
+
+          if (body?.token && body?.user) {
+            state.token = body.token;
+            state.user = body.user;
+            persistSession();
+            renderSessionUi();
+            return true;
+          }
+
+          return false;
+        })().finally(() => {
+          refreshInFlight = null;
+        });
+
+        return refreshInFlight;
+      }
+
+      async function api(
+        path,
+        options = {},
+        requiresAuth = false,
+        allowRefreshRetry = true,
+      ) {
         const headers = {
           "Content-Type": "application/json",
           ...(options.headers || {}),
@@ -832,6 +873,15 @@ No endpoint test run yet.</pre
 
         const body = await response.json().catch(() => ({}));
         if (!response.ok) {
+          if (
+            requiresAuth &&
+            allowRefreshRetry &&
+            response.status === 401 &&
+            (await refreshAccessToken())
+          ) {
+            return api(path, options, requiresAuth, false);
+          }
+
           const msg =
             body.error || body.message || `Request failed (${response.status})`;
           throw new Error(msg);
@@ -864,7 +914,12 @@ No endpoint test run yet.</pre
         const token = localStorage.getItem(STORAGE_TOKEN_KEY) || "";
         const rawUser = localStorage.getItem(STORAGE_USER_KEY);
         state.token = token;
-        state.user = rawUser ? JSON.parse(rawUser) : null;
+
+        try {
+          state.user = rawUser ? JSON.parse(rawUser) : null;
+        } catch {
+          state.user = null;
+        }
       }
 
       function renderSessionUi() {
@@ -874,11 +929,18 @@ No endpoint test run yet.</pre
         if (isLoggedIn) {
           els.sessionPill.textContent = `Logged in as ${state.user.name}`;
           els.authUser.hidden = false;
-          els.authUser.innerHTML = `<strong>${state.user.name}</strong><div>${state.user.email}</div>`;
+          els.authUser.replaceChildren();
+
+          const userName = document.createElement("strong");
+          userName.textContent = state.user.name;
+          const userEmail = document.createElement("div");
+          userEmail.textContent = state.user.email;
+
+          els.authUser.append(userName, userEmail);
         } else {
           els.sessionPill.textContent = "Not logged in";
           els.authUser.hidden = true;
-          els.authUser.innerHTML = "";
+          els.authUser.replaceChildren();
         }
 
         if (state.user) {
@@ -1033,9 +1095,12 @@ No endpoint test run yet.</pre
       }
 
       function renderMovies() {
-        els.movieGrid.innerHTML = "";
+        els.movieGrid.replaceChildren();
         if (!state.movies.length) {
-          els.movieGrid.innerHTML = '<div class="empty">No movies found.</div>';
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No movies found.";
+          els.movieGrid.appendChild(empty);
           return;
         }
 
@@ -1045,20 +1110,46 @@ No endpoint test run yet.</pre
           btn.className =
             "movie" + (movie.id === state.selectedMovieId ? " active" : "");
           btn.style.animationDelay = `${100 + index * 50}ms`;
-          btn.innerHTML = `
-            <p class="movie-title">${movie.title}</p>
-            <p class="movie-sub">${movie.language} - ${movie.durationMins} mins</p>
-          `;
+
+          const movieTitle = document.createElement("p");
+          movieTitle.className = "movie-title";
+          movieTitle.textContent = movie.title;
+
+          const movieMeta = document.createElement("p");
+          movieMeta.className = "movie-sub";
+          movieMeta.textContent = `${movie.language} - ${movie.durationMins} mins`;
+
+          btn.append(movieTitle, movieMeta);
           btn.addEventListener("click", () => selectMovie(movie.id));
           els.movieGrid.appendChild(btn);
         });
       }
 
+      function isSeatOwnedByCurrentUser(seat) {
+        if (!seat?.isbooked || !state.user) {
+          return false;
+        }
+
+        const bookedByUserId = Number(seat.booked_by_user_id);
+        if (Number.isInteger(bookedByUserId)) {
+          return bookedByUserId === Number(state.user.id);
+        }
+
+        return state.bookings.some(
+          (booking) =>
+            booking.movie_id === state.selectedMovieId &&
+            booking.seat_number === seat.seat_number,
+        );
+      }
+
       function renderSeats() {
-        els.seats.innerHTML = "";
+        els.seats.replaceChildren();
         if (!state.seats.length) {
-          els.seats.innerHTML =
-            '<div class="empty" style="grid-column: 1 / -1">Select a movie to load seats.</div>';
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.style.gridColumn = "1 / -1";
+          empty.textContent = "Select a movie to load seats.";
+          els.seats.appendChild(empty);
           return;
         }
 
@@ -1067,12 +1158,7 @@ No endpoint test run yet.</pre
           seatBtn.type = "button";
           seatBtn.classList.add("seat");
 
-          const mine = Boolean(
-            seat.isbooked &&
-            state.user &&
-            seat.name &&
-            seat.name.toLowerCase() === state.user.name.toLowerCase(),
-          );
+          const mine = isSeatOwnedByCurrentUser(seat);
 
           if (seat.isbooked) {
             seatBtn.classList.add("booked");
@@ -1094,17 +1180,21 @@ No endpoint test run yet.</pre
       }
 
       function renderBookings() {
-        els.bookingsList.innerHTML = "";
+        els.bookingsList.replaceChildren();
 
         if (!state.user) {
-          els.bookingsList.innerHTML =
-            '<div class="empty">Login to see your bookings.</div>';
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "Login to see your bookings.";
+          els.bookingsList.appendChild(empty);
           return;
         }
 
         if (!state.bookings.length) {
-          els.bookingsList.innerHTML =
-            '<div class="empty">No bookings yet.</div>';
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No bookings yet.";
+          els.bookingsList.appendChild(empty);
           return;
         }
 
@@ -1117,11 +1207,15 @@ No endpoint test run yet.</pre
             : `Movie ${booking.movie_id}`;
           const at = new Date(booking.created_at).toLocaleString();
 
-          item.innerHTML = `
-            <strong>${title}</strong>
-            <div>Seat ${booking.seat_number}</div>
-            <div class="muted">${at}</div>
-          `;
+          const titleEl = document.createElement("strong");
+          titleEl.textContent = title;
+          const seatEl = document.createElement("div");
+          seatEl.textContent = `Seat ${booking.seat_number}`;
+          const dateEl = document.createElement("div");
+          dateEl.className = "muted";
+          dateEl.textContent = at;
+
+          item.append(titleEl, seatEl, dateEl);
           els.bookingsList.appendChild(item);
         });
       }
@@ -1244,6 +1338,14 @@ No endpoint test run yet.</pre
       }
 
       async function logout() {
+        try {
+          await api("/auth/logout", {
+            method: "POST",
+          });
+        } catch {
+          // Do local cleanup even if network logout fails.
+        }
+
         state.token = "";
         state.user = null;
         state.bookings = [];

@@ -1,51 +1,79 @@
 import { pool } from "../config/db.js";
-import { MOCK_MOVIES } from "../config/movies.js";
+import { HttpError } from "../errors/HttpError.js";
 
-export function getMovies(req, res) {
-  res.send(MOCK_MOVIES);
+async function getMovieById(movieId) {
+  const result = await pool.query(
+    `
+      SELECT id, title, language, duration_mins AS "durationMins"
+      FROM movies
+      WHERE id = $1
+    `,
+    [movieId],
+  );
+
+  return result.rows[0] || null;
+}
+
+export async function getMovies(req, res) {
+  const result = await pool.query(
+    `
+      SELECT id, title, language, duration_mins AS "durationMins"
+      FROM movies
+      ORDER BY id
+    `,
+  );
+
+  res.send(result.rows);
 }
 
 export async function getMovieSeats(req, res) {
-  try {
-    const movieId = Number(req.params.movieId);
-    const movie = MOCK_MOVIES.find((item) => item.id === movieId);
+  const movieId = Number(req.params.movieId);
+  const movie = await getMovieById(movieId);
 
-    if (!movie) {
-      res.status(404).send({ error: "Movie not found" });
-      return;
-    }
-
-    const seatResult = await pool.query(
-      "SELECT id, movie_id, seat_number, isbooked, name FROM seats WHERE movie_id = $1 ORDER BY seat_number",
-      [movieId],
-    );
-
-    res.send({
-      movie,
-      seats: seatResult.rows,
-    });
-  } catch (error) {
-    console.error(error);
-    res.sendStatus(500);
+  if (!movie) {
+    throw new HttpError(404, "Movie not found", { code: "MOVIE_NOT_FOUND" });
   }
+
+  const seatResult = await pool.query(
+    `
+      SELECT
+        s.id,
+        s.movie_id,
+        s.seat_number,
+        s.isbooked,
+        s.name,
+        b.user_id AS booked_by_user_id
+      FROM seats s
+      LEFT JOIN bookings b ON b.seat_id = s.id
+      WHERE s.movie_id = $1
+      ORDER BY s.seat_number
+    `,
+    [movieId],
+  );
+
+  res.send({
+    movie,
+    seats: seatResult.rows,
+  });
 }
 
 export async function createBooking(req, res) {
   const conn = await pool.connect();
+  let committed = false;
 
   try {
     const movieId = Number(req.params.movieId);
-    const movie = MOCK_MOVIES.find((item) => item.id === movieId);
+    const movie = await getMovieById(movieId);
     const { seatNumber } = req.body;
 
     if (!movie) {
-      res.status(404).send({ error: "Movie not found" });
-      return;
+      throw new HttpError(404, "Movie not found", { code: "MOVIE_NOT_FOUND" });
     }
 
     if (!Number.isInteger(seatNumber) || seatNumber < 1) {
-      res.status(400).send({ error: "Valid seatNumber is required" });
-      return;
+      throw new HttpError(400, "Valid seatNumber is required", {
+        code: "INVALID_SEAT_NUMBER",
+      });
     }
 
     await conn.query("BEGIN");
@@ -56,22 +84,20 @@ export async function createBooking(req, res) {
     );
 
     if (seatResult.rowCount === 0) {
-      await conn.query("ROLLBACK");
-      res.status(404).send({ error: "Seat not found" });
-      return;
+      throw new HttpError(404, "Seat not found", { code: "SEAT_NOT_FOUND" });
     }
 
     const seat = seatResult.rows[0];
     if (seat.isbooked) {
-      await conn.query("ROLLBACK");
-      res.status(409).send({ error: "Seat already booked" });
-      return;
+      throw new HttpError(409, "Seat already booked", {
+        code: "SEAT_ALREADY_BOOKED",
+      });
     }
 
-    await conn.query("UPDATE seats SET isbooked = 1, name = $2 WHERE id = $1", [
-      seat.id,
-      req.user.name,
-    ]);
+    await conn.query(
+      "UPDATE seats SET isbooked = TRUE, name = $2 WHERE id = $1",
+      [seat.id, req.user.name],
+    );
 
     const bookingResult = await conn.query(
       "INSERT INTO bookings (user_id, seat_id, movie_id) VALUES ($1, $2, $3) RETURNING id, user_id, seat_id, movie_id, created_at",
@@ -79,6 +105,7 @@ export async function createBooking(req, res) {
     );
 
     await conn.query("COMMIT");
+    committed = true;
 
     res.status(201).send({
       message: "Seat booked successfully",
@@ -87,38 +114,54 @@ export async function createBooking(req, res) {
       booking: bookingResult.rows[0],
     });
   } catch (error) {
-    await conn.query("ROLLBACK");
-
-    if (error.code === "23505") {
-      res.status(409).send({ error: "Seat already booked" });
-      return;
+    if (!committed) {
+      await conn.query("ROLLBACK");
     }
 
-    console.error(error);
-    res.sendStatus(500);
+    if (error.code === "23505") {
+      throw new HttpError(409, "Seat already booked", {
+        code: "SEAT_ALREADY_BOOKED",
+      });
+    }
+
+    throw error;
   } finally {
     conn.release();
   }
 }
 
 export async function getMyBookings(req, res) {
-  try {
-    const sql = `
-      SELECT b.id AS booking_id, b.movie_id, b.created_at, s.seat_number
-      FROM bookings b
-      JOIN seats s ON s.id = b.seat_id
-      WHERE b.user_id = $1
-      ORDER BY b.created_at DESC
-    `;
-    const result = await pool.query(sql, [req.user.userId]);
-    const bookings = result.rows.map((booking) => ({
-      ...booking,
-      movie: MOCK_MOVIES.find((movie) => movie.id === booking.movie_id) || null,
-    }));
+  const sql = `
+    SELECT
+      b.id AS booking_id,
+      b.movie_id,
+      b.created_at,
+      s.seat_number,
+      m.title,
+      m.language,
+      m.duration_mins AS "durationMins"
+    FROM bookings b
+    JOIN seats s ON s.id = b.seat_id
+    LEFT JOIN movies m ON m.id = b.movie_id
+    WHERE b.user_id = $1
+    ORDER BY b.created_at DESC
+  `;
 
-    res.send(bookings);
-  } catch (error) {
-    console.error(error);
-    res.sendStatus(500);
-  }
+  const result = await pool.query(sql, [req.user.userId]);
+  const bookings = result.rows.map((booking) => ({
+    booking_id: booking.booking_id,
+    movie_id: booking.movie_id,
+    created_at: booking.created_at,
+    seat_number: booking.seat_number,
+    movie: booking.title
+      ? {
+          id: booking.movie_id,
+          title: booking.title,
+          language: booking.language,
+          durationMins: booking.durationMins,
+        }
+      : null,
+  }));
+
+  res.send(bookings);
 }
