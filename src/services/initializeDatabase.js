@@ -57,7 +57,8 @@ export async function initializeDatabase() {
       IF EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_name = 'seats'
+        WHERE table_schema = 'public'
+          AND table_name = 'seats'
           AND column_name = 'isbooked'
           AND data_type <> 'boolean'
       ) THEN
@@ -66,7 +67,13 @@ export async function initializeDatabase() {
 
         ALTER TABLE seats
         ALTER COLUMN isbooked TYPE BOOLEAN
-        USING (CASE WHEN isbooked::int = 0 THEN FALSE ELSE TRUE END);
+        USING (
+          CASE
+            WHEN isbooked IS NULL THEN FALSE
+            WHEN lower(trim(isbooked::text)) IN ('0', 'false', 'f', 'no', 'n') THEN FALSE
+            ELSE TRUE
+          END
+        );
       END IF;
     END
     $$;
